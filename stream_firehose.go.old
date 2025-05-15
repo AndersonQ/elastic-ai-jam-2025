@@ -1,0 +1,68 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"net/http"
+	"os"
+	"time"
+)
+
+// firehoseURL is the target URL for the game event stream.
+// IMPORTANT: Replace "http://localhost:8080" with the actual base URL of the API.
+const firehoseURL = "http://eah-2025-ai-jam.dev.elastic.cloud:8082/api/v0/games/_stream_firehose"
+
+func main() {
+	fmt.Printf("Attempting to connect to firehose stream: %s\n", firehoseURL)
+
+	// Create a new HTTP client with a timeout.
+	// The problem description mentions a 5-second timeout for TCP operations,
+	// but for an HTTP stream that's meant to be long-lived, we might not want a short client-side timeout.
+	// However, for the initial connection, a timeout is good.
+	// The http.Get default client doesn't have a timeout for the entire request/response cycle,
+	// only for specific phases if configured. We'll use the default client for simplicity here,
+	// but in a production tool, more sophisticated timeout handling would be needed.
+	client := &http.Client{
+		Timeout: 30 * time.Second, // Timeout for the initial connection and headers
+	}
+
+	// Perform the GET request
+	resp, err := client.Get(firehoseURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error making GET request to %s: %v\n", firehoseURL, err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	// Check the HTTP status code
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintf(os.Stderr, "Error: Received non-200 status code: %d %s\n", resp.StatusCode, resp.Status)
+		// Optionally, you could try to read the body here for an error message from the server
+		// bodyBytes, _ := io.ReadAll(resp.Body)
+		// fmt.Fprintf(os.Stderr, "Response body: %s\n", string(bodyBytes))
+		os.Exit(1)
+	}
+
+	fmt.Println("Successfully connected to firehose stream. Waiting for events...")
+	fmt.Println("-------------------------------------------------------------")
+
+	// Create a new scanner to read the response body line by line
+	scanner := bufio.NewScanner(resp.Body)
+	eventCount := 0
+	for scanner.Scan() {
+		eventCount++
+		fmt.Printf("Event %d: %s\n", eventCount, scanner.Text())
+		// In a real attack scenario, you might parse the JSON, log it to a file,
+		// or look for specific patterns/information.
+		// For DoS, you might just hold the connection or open many.
+	}
+
+	// Check for errors during scanning (e.g., if the connection is closed abruptly)
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error reading from stream: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("-------------------------------------------------------------")
+	fmt.Println("Stream ended or connection closed by server.")
+}
